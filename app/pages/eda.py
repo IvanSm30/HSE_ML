@@ -36,7 +36,7 @@ option = None
 if sample:
     option = st.selectbox(
         "Choice graphic",
-        ["Pairwise_distributions", "Corr", "Categorical_attributes_from_prices"],
+        ["Pairwise_distributions", "Corr", "Boxplot"],
         index=None,
         placeholder="Select one type of the graphic",
     )
@@ -79,49 +79,121 @@ else:
             else:
                 st.info("Correlation matrix is only available for the training sample.")
 
-        case "Categorical_attributes_from_prices":
+        case "Boxplot":
             if X is None or y is None:
-                st.error("Data not available for categorical plots.")
+                st.error("Data not available for boxplot.")
+                pass
+
+            cat_cols = list(X.select_dtypes(include=["object", "category"]).columns)
+
+            if len(cat_cols) == 0:
+                st.warning("No categorical columns found in the selected sample.")
+                pass
+
+            type_y = st.radio(
+                "Target scale", options=["normal", "log"], index=0, horizontal=True
+            )
+            y_to_use = np.log(y) if type_y == "log" else y
+
+            selected_cats = st.multiselect(
+                "Select categorical variables to plot",
+                options=cat_cols,
+                default=cat_cols[:4]
+                if len(cat_cols) >= 4
+                else cat_cols,  # по умолчанию первые 4
+            )
+
+            if not selected_cats:
+                st.info("Please select at least one categorical variable.")
             else:
-                type_y = st.selectbox(
-                    "Choice y",
-                    ["normal", "log"],
-                    index=None,
-                    placeholder="Select y type",
-                )
-                if type_y is None:
-                    st.info("Please select y type (normal or log).")
+                n_plots = len(selected_cats)
+                cols = min(n_plots, 4)
+                rows = (n_plots + cols - 1) // cols
+
+                fig, axes = plt.subplots(rows, cols, figsize=(5 * cols, 4 * rows))
+                if n_plots == 1:
+                    axes = [axes]
                 else:
-                    y_to_use = y_log if type_y == "log" else y
+                    axes = axes.flatten()
 
-                    n_cats = len(cat_cols)
-                    if n_cats == 0:
-                        st.warning("No categorical columns found.")
+                for i, cat_col in enumerate(selected_cats):
+                    ax = axes[i]
+                    unique_vals = X[cat_col].nunique()
+                    palette_i = sns.color_palette("husl", unique_vals)
+
+                    sns.boxplot(data=X, x=cat_col, y=y_to_use, ax=ax, palette=palette_i)
+                    ax.set_title(cat_col)
+                    ax.tick_params(axis="x", rotation=45)
+                    ax.set_ylabel(
+                        "selling_price" + (" (log)" if type_y == "log" else "")
+                    )
+
+                for j in range(n_plots, len(axes)):
+                    axes[j].set_visible(False)
+
+                plt.tight_layout()
+                st.pyplot(fig)
+            if X is None or y is None:
+                st.error("Data not available for boxplot.")
+            else:
+                numeric_columns = X.select_dtypes(include=["number"]).columns.tolist()
+                available_vars = ["selling_price"] + numeric_columns
+
+                selected_vars = st.multiselect(
+                    "Select numeric variables to plot (including selling_price)",
+                    options=available_vars,
+                    default=["selling_price"],
+                )
+
+                if not selected_vars:
+                    st.info("Please select at least one variable.")
+                else:
+                    use_log = False
+                    if "selling_price" in selected_vars:
+                        type_y = st.radio(
+                            "Target scale",
+                            options=["normal", "log"],
+                            index=0,
+                            horizontal=True,
+                            key="type_y"
+                        )
+                        use_log = type_y == "log"
+
+                    plot_data = X.copy()
+                    if "selling_price" in selected_vars:
+                        plot_data["selling_price"] = np.log(y) if use_log else y
+
+                    selected_vars = [
+                        col for col in selected_vars if col in plot_data.columns
+                    ]
+
+                    if not selected_vars:
+                        st.warning("No valid columns selected.")
                     else:
+                        n_vars = len(selected_vars)
+                        cols = min(n_vars, 3)
+                        rows = (n_vars + cols - 1) // cols
 
-                        fig, axes = plt.subplots(1, n_cats, figsize=(5 * n_cats, 6))
-                        if n_cats == 1:
+                        fig, axes = plt.subplots(
+                            rows, cols, figsize=(5 * cols, 4 * rows)
+                        )
+                        if n_vars == 1:
                             axes = [axes]
-                            
+                        else:
+                            axes = axes.flatten()
 
-                        for i, cat in enumerate(cat_cols):
-                            if cat in X.columns:
-                                n_colors = X[cat].nunique()
-                                current_palette = sns.color_palette("husl", n_colors)
-                                sns.boxplot(
-                                    data=X,
-                                    x=cat,
-                                    y=y_to_use,
-                                    ax=axes[i],
-                                    palette=current_palette,
-                                )
-                                axes[i].tick_params(axis="x", rotation=45)
-                                axes[i].set_title(cat)
-                            else:
-                                axes[i].set_visible(False)
-                                st.warning(
-                                    f"Column '{cat}' not found in selected sample."
-                                )
+                        for i, var in enumerate(selected_vars):
+                            sns.boxplot(
+                                y=plot_data[var],
+                                ax=axes[i],
+                                width=0.5,
+                                color=palette[i % len(palette)],
+                            )
+                            axes[i].set_title(f"Boxplot: {var}")
+                            axes[i].set_ylabel(var)
+
+                        for j in range(n_vars, len(axes)):
+                            axes[j].set_visible(False)
 
                         plt.tight_layout()
                         st.pyplot(fig)
